@@ -499,7 +499,7 @@ elif menu == "Historial y estadísticas":
         stats = stats.fillna(0)
         stats["AVG (referencial)"] = stats.apply(
             lambda r: round(r["hits"] / r["turnos"], 3) if r["turnos"] else 0,
-            axis=1
+            axis=4
         )
         st.dataframe(stats, use_container_width=True, hide_index=True)
         chart = px.bar(stats, x="jugador", y="CE", color="equipo",
