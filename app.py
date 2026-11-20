@@ -352,7 +352,7 @@ elif menu == "Anotar jugadas":
             with st.form("play_form", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
-                    inning = st.number_input("Entrada", min_value=1, max_value=20, value=1, step=1)
+                    inning = st.number_input("Entrada", min_value=1, max_value=20, value=1, step=1,key="entrada_actual")
                     player_label = st.selectbox("Bateador", list(player_labels.keys()))
                     event_type = st.selectbox("Resultado de la jugada", event_types)
                 with col2:
