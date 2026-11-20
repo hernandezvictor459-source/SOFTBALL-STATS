@@ -223,12 +223,53 @@ elif menu == "Equipos y jugadores":
 
     st.markdown("#### Plantillas registradas")
     roster = read_df("""
-        SELECT t.name AS Equipo, p.jersey_number AS Número,
-               p.name AS Jugador, p.position AS Posición
+        SELECT p.id AS ID, p.team_id, t.name AS Equipo,
+               p.jersey_number AS Número, p.name AS Jugador,
+               p.position AS Posición
         FROM players p JOIN teams t ON t.id=p.team_id
         WHERE p.active=1 ORDER BY t.name, p.name
     """)
-    st.dataframe(roster, use_container_width=True, hide_index=True)
+    st.dataframe(roster[["ID", "Equipo", "Número", "Jugador", "Posición"]], use_container_width=True, hide_index=True)
+
+    st.markdown("#### Editar jugador")
+    if not roster.empty:
+        ids = roster["ID"].astype(int).tolist()
+        pid = st.selectbox("Jugador que deseas editar", ids,
+            format_func=lambda x: f'ID {x} · {roster.loc[roster.ID == x, "Jugador"].iloc[0]} ({roster.loc[roster.ID == x, "Equipo"].iloc[0]})')
+        row = roster[roster.ID == pid].iloc[0]
+        team_map_edit = dict(zip(teams["name"], teams["id"]))
+        pos_options = ["", "Lanzador (P)", "Receptor (C)", "Primera base (1B)", "Segunda base (2B)", "Tercera base (3B)", "Campo corto (SS)", "Jardín izquierdo (LF)", "Jardín central (CF)", "Jardín derecho (RF)", "Bateador designado (BD)", "Otra"]
+        old_pos = "" if pd.isna(row["Posición"]) else str(row["Posición"])
+        with st.form("edit_player_form"):
+            new_team = st.selectbox("Equipo", list(team_map_edit), index=list(team_map_edit.values()).index(int(row.team_id)))
+            new_name = st.text_input("Nombre", str(row.Jugador))
+            new_number = st.text_input("Número", "" if pd.isna(row["Número"]) else str(row["Número"]))
+            new_pos = st.selectbox("Posición", pos_options, index=pos_options.index(old_pos) if old_pos in pos_options else 0)
+            if st.form_submit_button("Guardar cambios del jugador"):
+                try:
+                    with get_conn() as conn:
+                        conn.execute("UPDATE players SET team_id=?, name=?, jersey_number=?, position=? WHERE id=?", (int(team_map_edit[new_team]), new_name.strip(), new_number.strip(), new_pos, int(pid)))
+                        conn.commit()
+                    st.success("Jugador actualizado.")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Ya existe un jugador con ese nombre en el equipo seleccionado.")
+
+    st.markdown("#### Editar equipo")
+    if not teams.empty:
+        tid = st.selectbox("Equipo que deseas editar", teams["id"].astype(int).tolist(), format_func=lambda x: teams.loc[teams.id == x, "name"].iloc[0])
+        old_team_name = teams.loc[teams.id == tid, "name"].iloc[0]
+        with st.form("edit_team_form"):
+            new_team_name = st.text_input("Nombre del equipo", old_team_name)
+            if st.form_submit_button("Guardar cambios del equipo"):
+                try:
+                    with get_conn() as conn:
+                        conn.execute("UPDATE teams SET name=? WHERE id=?", (new_team_name.strip(), int(tid)))
+                        conn.commit()
+                    st.success("Equipo actualizado.")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Ya existe un equipo con ese nombre.")
 
 elif menu == "Crear partido":
     st.subheader("Crear un partido")
@@ -349,14 +390,37 @@ elif menu == "Anotar jugadas":
         st.dataframe(log, use_container_width=True, hide_index=True)
 
         if not log.empty:
-            delete_id = st.number_input("ID de jugada para corregir/eliminar", min_value=0, step=1, value=0)
-            if st.button("Eliminar jugada seleccionada", type="secondary"):
-                if delete_id > 0:
+            st.markdown("#### Editar jugada registrada")
+            play_ids = log["id"].astype(int).tolist()
+            selected_play = st.selectbox("Selecciona la jugada", play_ids,
+                format_func=lambda x: f'ID {x} · Entrada {log.loc[log.id == x, "Entrada"].iloc[0]} · {log.loc[log.id == x, "Bateador"].iloc[0]} · {log.loc[log.id == x, "Jugada"].iloc[0]}')
+            old_play = read_df("SELECT * FROM plays WHERE id=?", (int(selected_play),)).iloc[0]
+            edit_roster = player_options(int(old_play.batting_team_id))
+            edit_player_labels = {f'{r.name} · #{r.jersey_number or "s/n"}': int(r.id) for r in edit_roster.itertuples()}
+            old_label = next((k for k,v in edit_player_labels.items() if v == int(old_play.player_id)), list(edit_player_labels)[0])
+            with st.form("edit_play_form"):
+                e_inning = st.number_input("Entrada", min_value=1, max_value=20, value=int(old_play.inning))
+                e_player = st.selectbox("Bateador", list(edit_player_labels), index=list(edit_player_labels).index(old_label))
+                e_event = st.selectbox("Resultado", event_types, index=event_types.index(old_play.event_type) if old_play.event_type in event_types else 0)
+                a,b,c,d = st.columns(4)
+                e_runs = a.number_input("Carreras", min_value=0, max_value=4, value=int(old_play.runs_scored))
+                e_rbi = b.number_input("CE", min_value=0, max_value=4, value=int(old_play.rbi))
+                e_sb = c.number_input("BR", min_value=0, max_value=4, value=int(old_play.stolen_bases))
+                e_outs = d.number_input("Outs", min_value=0, max_value=3, value=int(old_play.outs_recorded))
+                if st.form_submit_button("Guardar corrección"):
                     with get_conn() as conn:
-                        conn.execute("DELETE FROM plays WHERE id=? AND game_id=?", (int(delete_id), game_id))
+                        conn.execute("UPDATE plays SET inning=?, player_id=?, event_type=?, runs_scored=?, rbi=?, stolen_bases=?, outs_recorded=? WHERE id=?", (int(e_inning), int(edit_player_labels[e_player]), e_event, int(e_runs), int(e_rbi), int(e_sb), int(e_outs), int(selected_play)))
                         conn.commit()
-                    st.success("Jugada eliminada.")
+                    st.success("Jugada corregida.")
                     st.rerun()
+
+            delete_id = st.selectbox("Jugada que deseas eliminar", play_ids, key="delete_play_select")
+            if st.button("Eliminar jugada seleccionada", type="secondary"):
+                with get_conn() as conn:
+                    conn.execute("DELETE FROM plays WHERE id=? AND game_id=?", (int(delete_id), game_id))
+                    conn.commit()
+                st.success("Jugada eliminada.")
+                st.rerun()
 
         if st.button("Finalizar partido", type="primary"):
             with get_conn() as conn:
@@ -385,6 +449,35 @@ elif menu == "Historial y estadísticas":
             games[["game_date", "Visitante", "Local", "Resultado", "status"]],
             use_container_width=True, hide_index=True
         )
+
+        st.markdown("#### Editar partido")
+        game_ids = games["id"].astype(int).tolist()
+        edit_gid = st.selectbox("Partido que deseas editar", game_ids,
+            format_func=lambda x: f'#{x} · {games.loc[games.id == x, "Visitante"].iloc[0]} vs {games.loc[games.id == x, "Local"].iloc[0]}')
+        game_row = read_df("SELECT * FROM games WHERE id=?", (int(edit_gid),)).iloc[0]
+        all_teams = team_options()
+        team_map_all = dict(zip(all_teams["name"], all_teams["id"]))
+        team_names_all = list(team_map_all)
+        away_old = all_teams.loc[all_teams.id == int(game_row.away_team_id), "name"].iloc[0]
+        home_old = all_teams.loc[all_teams.id == int(game_row.home_team_id), "name"].iloc[0]
+        with st.form("edit_game_form"):
+            e_date = st.date_input("Fecha", value=date.fromisoformat(str(game_row.game_date)))
+            e_away = st.selectbox("Visitante", team_names_all, index=team_names_all.index(away_old))
+            home_options = [x for x in team_names_all if x != e_away]
+            home_default = home_old if home_old in home_options else home_options[0]
+            e_home = st.selectbox("Local", home_options, index=home_options.index(home_default))
+            inning_options = [5,6,7,8,9]
+            e_innings = st.selectbox("Entradas programadas", inning_options, index=inning_options.index(int(game_row.innings)) if int(game_row.innings) in inning_options else 2)
+            statuses = ["En curso", "Finalizado"]
+            e_status = st.selectbox("Estado", statuses, index=statuses.index(game_row.status) if game_row.status in statuses else 0)
+            e_notes = st.text_area("Notas", value=game_row.notes or "")
+            if st.form_submit_button("Guardar cambios del partido"):
+                with get_conn() as conn:
+                    conn.execute("UPDATE games SET game_date=?, away_team_id=?, home_team_id=?, innings=?, status=?, notes=? WHERE id=?", (e_date.isoformat(), int(team_map_all[e_away]), int(team_map_all[e_home]), int(e_innings), e_status, e_notes.strip(), int(edit_gid)))
+                    conn.commit()
+                st.success("Partido actualizado.")
+                st.rerun()
+
         selected_game = st.selectbox(
             "Filtrar estadísticas por partido",
             ["Toda la temporada"] + [
