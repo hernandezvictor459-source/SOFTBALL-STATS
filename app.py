@@ -498,7 +498,7 @@ elif menu == "Historial y estadísticas":
     if not stats.empty:
         stats = stats.fillna(0)
         stats["AVG (referencial)"] = stats.apply(
-            lambda r: round(r["hits"] / r["turnos"] * 1000, 3) if r["turnos"] else 0,
+            lambda r: round(r["hits"] / r["turnos"] * 1,000, 0) if r["turnos"] else 0,
             axis=1
         )
         st.dataframe(stats, use_container_width=True, hide_index=True)
